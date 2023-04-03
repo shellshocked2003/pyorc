@@ -6,7 +6,7 @@
 API reference
 =============
 
-**pyorc**'s consists of several subclasses of the ``xarray.Dataset`` and ``xarray.DataArray`` data models.
+**pyorc**'s API consists of several subclasses of the ``xarray.Dataset`` and ``xarray.DataArray`` data models.
 In a nutshell, xarray_'s data models are meant to store and analyze scientific datasets with multiple
 dimensions. A ``xarray.DataArray`` contains one variable with possibly several dimensions and coordinates
 within those dimensions. A ``xarray.Dataset`` may contain multiple ``xarray.DataArray`` objects, with shared 
@@ -44,9 +44,10 @@ Setting of properties and attributes
 .. autosummary::
     :toctree: _generated
 
-    CameraConfig.set_corners
+    CameraConfig.set_bbox_from_corners
     CameraConfig.set_gcps
     CameraConfig.set_lens_pars
+    CameraConfig.set_lens_calibration
     CameraConfig.set_lens_position
 
 Exporting
@@ -77,6 +78,7 @@ Plotting methods
     :toctree: _generated
 
     CameraConfig.plot
+    CameraConfig.plot_bbox
 
 .. _video:
 
@@ -95,6 +97,7 @@ Class and properties
     Video.end_frame
     Video.start_frame
     Video.corners
+    Video.plot_rigid_pts
 
 Getting frames from video objects
 ---------------------------------
@@ -130,9 +133,9 @@ Enhancing frames
     :toctree: _generated
 
     Frames.edge_detect
-    Frames.landmask
     Frames.normalize
-    Frames.reduce_rolling
+    Frames.time_diff
+    Frames.smooth
 
 Projecting frames to planar views
 ---------------------------------
@@ -157,6 +160,7 @@ Visualizing frames
 
     Frames.plot
     Frames.to_ani
+    Frames.to_video
 
 .. _velocimetry:
 
@@ -176,28 +180,40 @@ Class and properties
     Velocimetry.camera_shape
     Velocimetry.h_a
 
-Temporal filters
-----------------
+.. _masks:
+
+Temporal masking methods
+------------------------
+
+The mask methods below either require or may have a dimension ``time`` in the data. Therefore they are most logically
+applied before doing any reducing over time.
 
 .. autosummary::
     :toctree: _generated
+    :template: accessor_method.rst
 
-    Velocimetry.filter_temporal
-    Velocimetry.filter_temporal_angle
-    Velocimetry.filter_temporal_neighbour
-    Velocimetry.filter_temporal_std
-    Velocimetry.filter_temporal_velocity
-    Velocimetry.filter_temporal_corr
+    Velocimetry.mask.minmax
+    Velocimetry.mask.corr
+    Velocimetry.mask.angle
+    Velocimetry.mask.rolling
+    Velocimetry.mask.outliers
+    Velocimetry.mask.variance
+    Velocimetry.mask.count
 
-Spatial filters
----------------
+.. _spatial_mask:
+
+Spatial masking methods
+-----------------------
+
+The spatial masking methods look at a time reduced representation of the grid results. The resulting mask can be applied
+on a full time series and will then mask out grid cells over its full time span if these do not pass the mask.
 
 .. autosummary::
     :toctree: _generated
+    :template: accessor_method.rst
 
-    Velocimetry.filter_spatial
-    Velocimetry.filter_spatial_nan
-    Velocimetry.filter_spatial_median
+    Velocimetry.mask.window_mean
+    Velocimetry.mask.window_nan
 
 Data infilling
 --------------
@@ -206,6 +222,8 @@ Data infilling
     :toctree: _generated
 
     Velocimetry.replace_outliers
+
+.. _transects:
 
 Getting data over transects
 ---------------------------
@@ -256,6 +274,8 @@ Derivatives
 
     Transect.vector_to_scalar
     Transect.get_xyz_perspective
+
+.. _river_flow:
 
 River flow methods
 ------------------

@@ -4,6 +4,7 @@ import cv2
 import dask
 import matplotlib.pyplot as plt
 import numpy as np
+import rasterio
 import xarray as xr
 
 from matplotlib.animation import FuncAnimation, FFMpegWriter
@@ -26,7 +27,6 @@ class Frames(ORCBase):
             frames data fields (from pyorc.Video.get_frames)
         """
         super(Frames, self).__init__(xarray_obj)
-
 
     def get_piv(self, **kwargs):
         """Perform PIV computation on projected frames. Only a pipeline graph to computation is setup. Call a result to
@@ -60,7 +60,7 @@ class Frames(ORCBase):
             kwargs["overlap"] = int(round(camera_config.window_size) / 2)
         # first get rid of coordinates that need to be recalculated
         coords_drop = list(set(self._obj.coords) - set(self._obj.dims))
-        obj = self._obj.drop(coords_drop)
+        obj = self._obj.drop_vars(coords_drop)
         # get frames and shifted frames in time
         frames1 = obj.shift(time=1)[1:]
         frames2 = obj[1:]
@@ -84,9 +84,20 @@ class Frames(ORCBase):
             lons = None
             lats = None
 
-        M = camera_config.get_M(self.h_a, reverse=True)
+        # new approach to getting M (from bbox coordinates)
+        src = camera_config.get_bbox(camera=True, h_a=self.h_a).exterior.coords[0:4]
+        dst_xy = camera_config.get_bbox().exterior.coords[0:4]
+        # get geographic coordinates bbox corners
+        dst = cv.transform_to_bbox(dst_xy, camera_config.bbox, camera_config.resolution)
+        M = cv.get_M_2D(src, dst, reverse=True)
+        # TODO: remove when above 4 lines work
+        # M = camera_config.get_M(self.h_a, to_bbox_grid=True, reverse=True)
         # compute row and column position of vectors in original reprojected background image col/row coordinates
-        xp, yp = helpers.xy_to_perspective(*np.meshgrid(x, np.flipud(y)), self.camera_config.resolution, M)
+        xp, yp = helpers.xy_to_perspective(
+            *np.meshgrid(x, np.flipud(y)),
+            self.camera_config.resolution,
+            M
+        )
         # ensure y coordinates start at the top in the right orientation (different from order of a CRS)
         shape_y, shape_x = self.camera_shape
         yp = shape_y - yp
@@ -140,7 +151,6 @@ class Frames(ORCBase):
         ds.velocimetry.set_encoding()
         return ds
 
-
     def project(self, resolution=None):
         """Project frames into a projected frames object, with information from the camera_config attr.
         This requires that the CameraConfig contains full gcp information. If a CRS is provided, also "lat" and "lon"
@@ -161,8 +171,15 @@ class Frames(ORCBase):
         camera_config = copy.deepcopy(self.camera_config)
         if resolution is not None:
             camera_config.resolution = resolution
-        M = camera_config.get_M(self.h_a)
+        # convert bounding box coords into row/column space
         shape = camera_config.shape
+        # get camera perspective bbox corners
+        src = camera_config.get_bbox(camera=True, h_a=self.h_a).exterior.coords[0:4]
+        dst_xy = camera_config.get_bbox().exterior.coords[0:4]
+        # get geographic coordinates bbox corners
+        dst = cv.transform_to_bbox(dst_xy, camera_config.bbox, camera_config.resolution)
+        M = cv.get_M_2D(src, dst)
+
         # prepare all coordinates
         y = np.flipud(np.linspace(
             camera_config.resolution / 2,
@@ -228,7 +245,6 @@ class Frames(ORCBase):
 
         return f
 
-
     def landmask(self, dilate_iter=10, samples=15):
         """Attempt to mask out land from water, by assuming that the time standard deviation over mean of land is much
         higher than that of water. An automatic threshold using Otsu thresholding is used to separate and a dilation
@@ -268,7 +284,6 @@ class Frames(ORCBase):
         # make mask 3-dimensional
         return (self._obj * mask)
 
-
     def normalize(self, samples=15):
         """Remove the mean of sampled frames. This is typically used to remove non-moving background from foreground, and
         helps to increase contrast when river bottoms are visible, or when the objective contains partly illuminated and
@@ -297,8 +312,7 @@ class Frames(ORCBase):
         frames_norm = ((frames_reduce - frames_min) / (frames_max - frames_min) * 255).astype("uint8")
         return frames_norm
 
-
-    def edge_detect(self, wdw_1=2, wdw_2=4):
+    def edge_detect(self, wdw_1=1, wdw_2=2):
         """Convert frames in edges, using a band convolution filter. The filter uses two slightly differently convolved
         images and computes their difference to detect edges.
 
@@ -332,6 +346,15 @@ class Frames(ORCBase):
             keep_attrs=True
         )
 
+    def minmax(self, min=-np.Inf, max=np.Inf):
+        return np.maximum(
+            np.minimum(
+                self._obj,
+                max
+            ),
+            min
+        )
+
 
     def reduce_rolling(self, samples=25):
         """Remove a rolling mean from the frames (very slow, so in most cases, it is recommended to use
@@ -360,6 +383,67 @@ class Frames(ORCBase):
         frames_norm = frames_norm.where(roll_mean != 0, 0)
         return frames_norm
 
+
+    def time_diff(self, thres=2, abs=False):
+        """
+        Apply a difference over time (i.e. subtract frame 1 from frame 2, frame 2 from frame 3, etcetera.
+        This method is very efficient to highlight moving objects when the video is very stable. If the video
+        is very unstable this filter may lead to very bad results.
+
+        Parameters
+        ----------
+        thres : float, optional
+            obsolute value intensity threshold to set values to zero when intensity is lower than this threshold
+            default: 2.
+        abs : boolean, optional
+            if set to True (default: False) apply absolute value on result
+
+        Returns
+        -------
+        da : xr.DataArray
+            filtered frames
+
+        """
+        frames_diff = self._obj.astype(np.float32).diff(dim="time")
+        frames_diff = frames_diff.where(np.abs(frames_diff) > thres)
+        frames_diff.attrs = self._obj.attrs
+        # frames_diff -= frames_diff.min(dim=["x", "y"])
+        frames_diff = frames_diff.fillna(0.)
+        if abs:
+            return np.abs(frames_diff)
+        return frames_diff
+
+
+    def smooth(self, wdw=1):
+        """
+        Smooth each frame with a Gaussian kernel.
+
+        Parameters
+        ----------
+        wdw : int, optional
+            window height or width applied. if set to 1 (default) then the total window is 3x3 (i.e. 2 * 1 + 1). When
+            set to 2, the total window is 5x5 (i.e. 2 * 2 + 1). Very effective to apply before ``Frames.time_diff``.
+            The value for ``wdw`` shouild be chosen such that the moving features of interest are not removed from
+            the view. This can be based on a visual interpretation of a result.
+
+        Returns
+        -------
+        da : xr.DataArray
+            filtered frames
+
+        """
+        stride = wdw * 2 + 1
+        f = xr.apply_ufunc(
+            cv._smooth,
+            self._obj, stride,
+            input_core_dims=[["y", "x"], []],
+            output_core_dims=[["y", "x"]],
+            output_dtypes=[np.float32],
+            vectorize=True,
+            dask="parallelized",
+            keep_attrs=True
+        )
+        return f
 
     def to_ani(
             self,
@@ -406,12 +490,56 @@ class Frames(ORCBase):
 
         im = ax.imshow(self._obj[0], **kwargs)
         if progress_bar:
-            frames = tqdm(range(len(self._obj)))
+            frames = tqdm(range(len(self._obj)), position=0, leave=True)
         else:
             frames = range(len(self._obj))
         anim = FuncAnimation(
             f, animate, init_func=init, frames=frames, **anim_kwargs
         )
         anim.save(fn, **video_kwargs)
+
+    def to_video(
+            self,
+            fn,
+            video_format=cv2.VideoWriter_fourcc(*"mp4v"),
+            fps=None
+    ):
+        """
+        Write frames to a video file without any layout
+
+        Parameters
+        ----------
+        fn : str
+            Path to output file
+        video_format : cv2.VideoWriter_fourcc, optional
+            A VideoWriter preference, default is cv2.VideoWriter_fourcc(*"mp4v")
+        fps : float, optional
+            Frames per second, if not provided, derived from original video
+
+        Returns
+        -------
+        None
+        """
+        if fps is None:
+            # estimate it from the time differences
+            fps = 1/(self._obj["time"][1].values - self._obj["time"][0].values)
+        h = self._obj.shape[1]
+        w = self._obj.shape[2]
+        out = cv2.VideoWriter(fn, video_format, fps, (w, h))
+        pbar = tqdm(self._obj, position=0, leave=True)
+        pbar.set_description("Writing frames")
+        for n, f in enumerate(pbar):
+            if len(f.shape) == 3:
+                img = cv2.cvtColor(f.values, cv2.COLOR_RGB2BGR)
+            else:
+                img = f.values
+                if n == 0:
+                    # make a scale between 0 and 255, only with first frame
+                    img_min = img.min(axis=0).min(axis=0)
+                    img_max = img.max(axis=0).max(axis=0)
+                img = np.uint8(255*((img - img_min)/(img_max - img_min)))
+                img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+            out.write(img)
+        out.release()
 
     plot = _frames_plot

@@ -10,6 +10,7 @@ dependencies:
   - cartopy
   - descartes
   - geojson
+  - geopandas
   - geos
   - jupyter
   - matplotlib
@@ -26,6 +27,8 @@ dependencies:
   - shapely
   - tqdm
   - xarray
+  - typeguard
+  - yaml
   - pip:
     - openpiv
 

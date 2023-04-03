@@ -14,8 +14,8 @@ import shutil
 import sphinx_autosummary_accessors
 import os
 import sys
-import pyorc
 from distutils.dir_util import copy_tree
+import pyorc
 
 sys.path.insert(0, os.path.abspath('.'))
 sys.path.insert(0, os.path.abspath('..'))
@@ -35,25 +35,26 @@ if os.path.isdir("_examples"):
     remove_dir_content("_examples")
 os.makedirs("_examples/ngwerere")
 copy_tree("../examples/ngwerere", "_examples/ngwerere")
+copy_tree("../examples/camera_calib", "_examples/camera_calib")
 
 # copy specific notebooks to include in build
 shutil.copy("../examples/01_Camera_Configuration_single_video.ipynb", "_examples")
-
+#
 # Notebook 02 requires considerable rendering time. Therefore it is not executed unless a final build is done
 shutil.copy("../examples/02_Process_velocimetry.ipynb", "_examples")
-shutil.copy("../examples/03_Plotting_and_filtering_velocimetry_results.ipynb", "_examples")
+shutil.copy("../examples/03_Plotting_and_masking_velocimetry_results.ipynb", "_examples")
 shutil.copy("../examples/04_Extracting_crosssection_velocities_and_discharge.ipynb", "_examples")
+shutil.copy("../examples/05_Camera_calibration.ipynb", "_examples")
 
 # -- Project information -----------------------------------------------------
 
 project = 'pyorc'
-copyright = '2022, Rainbow Sensing'
+copyright = '2023, Rainbow Sensing'
 author = 'Hessel Winsemius'
 
 # The full version, including alpha/beta/rc tags
-# TODO: uncomment this as soon as we have a version number on the package within pypi
-# release = pkg_resources.get_distribution("ODMax").version
-release = '0.2.3'
+# release = pkg_resources.get_distribution("pyorc").version
+release = pyorc.__version__
 
 # -- General configuration ---------------------------------------------------
 
@@ -69,11 +70,11 @@ extensions = [
     "IPython.sphinxext.ipython_console_highlighting",
     "nbsphinx",
     "sphinxcontrib.programoutput",
-    "sphinx_autosummary_accessors"
+    "sphinx_autosummary_accessors",
+    "sphinx_design"
 ]
-
 autosummary_generate = True
-
+nbsphinx_allow_errors = True
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates', sphinx_autosummary_accessors.templates_path]
 
@@ -93,18 +94,21 @@ html_theme = 'pydata_sphinx_theme'
 autodoc_member_order = "bysource"
 autoclass_content = "both"
 
+html_static_path = ['_static']
+html_css_files = ["theme-localdevices.css"]
+
 html_theme_options = {
     "show_nav_level": 2,
     "navbar_align": "content",
     # "use_edit_page_button": True,
-    # "icon_links": [
-    #     {
-    #         "name": "Rainbow Sensing",
-    #         "url": "https://...",
-    #         "icon": "_static/....svg",
-    #         "type": "local",
-    #     },
-    # ],
+    "icon_links": [
+        {
+            "name": "Local Devices",
+            "url": "https://localdevices.org",
+            "icon": "_static/logo.svg",
+            "type": "local",
+        },
+    ],
 }
 
 html_context = {
@@ -116,10 +120,9 @@ html_context = {
 }
 
 
-remove_from_toctrees = ["_generated/*"]
+remove_from_toctrees = ["_generated/*", "_build/doctrees/*"]
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ['_static']
 print(sys.path)
